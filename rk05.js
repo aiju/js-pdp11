@@ -111,10 +111,10 @@ rkwrite16(a,v)
 	case 0777406: RKWC = v; break;
 	case 0777410: RKBA = v; break;
 	case 0777412:
-		drive = RKDA >> 13;
-		cylinder = (RKDA >> 5) & 127;
-		surface = (RKDA >> 4) & 1;
-		sector = RKDA & 15;
+		drive = v >> 13;
+		cylinder = (v >> 5) & 127;
+		surface = (v >> 4) & 1;
+		sector = v & 15;
 		break;
 	default:
 		panic("invalid write");
@@ -129,7 +129,6 @@ rkreset()
 	RKCS = 1 << 7;
 	RKWC = 0;
 	RKBA = 0;
-	RKDA = 0;
 	RKDB = 0;
 }
 

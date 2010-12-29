@@ -8,20 +8,13 @@ var R = [0, 0, 0, 0, 0, 0, 0, 0]; // registers
 var KSP = 0; // kernel stack pointer
 var PS = 0; // processor status
 var curPC = 0; // address of current instruction
+var lastPCs = [];
 var instr = 0; // current instruction
 var memory = new Array(128*1024); // word addressing
 var tim1, tim2;
 var ips;
 var SR0;
-var Page = {
-	par : 0,
-	pdr : 0,
-	addr : 0,
-	len : 0,
-	read : 0,
-	write : 0,
-	ed : 0,
-};
+var curuser = false, prevuser = false;
 
 var pages = new Array(16);
 
@@ -63,9 +56,10 @@ physread16(a)
 	if(a % 1) panic("read from odd address " + ostr(a,6));
 	if(a < 0760000) return memory[a>>1];
 	if(a == 0777776) return PS;
+	if(a == 0777572) return SR0;
 	if((a & 0777770) == 0777560) return consread16(a);
 	if((a & 0777760) == 0777400) return rkread16(a);
-	if((a & 0777600) == 0772200) return mmuread16(a);
+	if((a & 0777600) == 0772200 || (a & 0777600) == 0777600) return mmuread16(a);
 	panic("read from invalid address " + ostr(a,6));
 }
 
@@ -103,23 +97,36 @@ physwrite16(a,v)
 {
 	if(a % 1) panic("write to odd address " + ostr(a,6));
 	if(a < 0760000) memory[a>>1] = v;
-	else if(a == 0777776) PS = v;
+	else if(a == 0777776) {
+		PS = v;
+		switch(PS >> 14) {
+		case 0: curuser = false; break;
+		case 3: curuser = true; break;
+		default: panic("invalid mode");
+		}
+		switch((PS >> 12) & 3) {
+		case 0: prevuser = false; break;
+		case 3: prevuser = true; break;
+		default: panic("invalid mode");
+		}
+	}
+	else if(a == 0777572) SR0 = v;
 	else if((a & 0777770) == 0777560) conswrite16(a,v);
 	else if((a & 0777700) == 0777400) rkwrite16(a,v);
-	else if((a & 0777600) == 0772200) mmuwrite16(a,v);
+	else if((a & 0777600) == 0772200 || (a & 0777600) == 0777600) mmuwrite16(a,v);
 	else panic("write to invalid address " + ostr(a,6));
 }
 
 function
-decode(a,w)
+decode(a,w,m)
 {
 	var p, user, block, disp;
 	if(!(SR0 & 1)) {
 		if(a >= 0170000) a += 0600000;
 		return a;
 	}
-	user = 0; // FIXME for user mode
-	p = pages[(a >> 12) + user];
+	user = m ? 8 : 0;
+	p = pages[(a >> 13) + user];
 	if(w && !p.write) panic("write to read-only page " + ostr(a,6));
 	if(!p.read) panic("read from no-access page " + ostr(a,6));
 	block = (a >> 6) & 0177;
@@ -136,22 +143,31 @@ decode(a,w)
 function
 createpage(par,pdr)
 {
-	var p;
-	p = new(Page);
-	p.par = par;
-	p.pdr = pdr;
-	p.addr = par & 07777;
-	p.len = (pdr >> 8) & 0x7F;
-	p.ed = (pdr & 8) == 8;
-	p.read = (pdr & 2) == 2;
-	p.write = (pdr & 6) == 6;
-	return p;
+	return {
+		par : par,
+		pdr : pdr,
+		addr : par & 07777,
+		len : (pdr >> 8) & 0x7F,
+		read : (pdr & 2) == 2,
+		write : (pdr & 6) == 6,
+		ed : (pdr & 8) == 8
+	};
 }
 
 function
 mmuread16(a)
 {
-	panic("read from invalid address " + ostr(a,6));
+	var i;
+	i = (a & 017)>>1;
+	if((a >= 0772300) && (a < 0772320))
+		return pages[i].pdr;
+	if((a >= 0772340) && (a < 0772360))
+		return pages[i].par;
+	if((a >= 0777600) && (a < 0777620))
+		return pages[i+8].pdr;
+	if((a >= 0777640) && (a < 0777660))
+		return pages[i+8].par;
+	panic("invalid read from " + ostr(a,6));
 }
 
 function
@@ -161,9 +177,19 @@ mmuwrite16(a, v)
 	i = (a & 017)>>1;
 	if((a >= 0772300) && (a < 0772320)) {
 		pages[i] = createpage(pages[i].par, v);
+		return;
 	}
 	if((a >= 0772340) && (a < 0772360)) {
 		pages[i] = createpage(v, pages[i].pdr);
+		return;
+	}
+	if((a >= 0777600) && (a < 0777620)) {
+		pages[i+8] = createpage(pages[i+8].par, v);
+		return;
+	}
+	if((a >= 0777640) && (a < 0777660)) {
+		pages[i+8] = createpage(v, pages[i+8].pdr);
+		return;
 	}
 	panic("write to invalid address " + ostr(a,6));
 }
@@ -171,25 +197,25 @@ mmuwrite16(a, v)
 function
 read8(a)
 {
-	return physread8(decode(a, false));
+	return physread8(decode(a, false, curuser));
 }
 
 function
 read16(a)
 {
-	return physread16(decode(a, false));
+	return physread16(decode(a, false, curuser));
 }
 
 function
 write8(a, v)
 {
-	return physwrite8(decode(a, false),v);
+	return physwrite8(decode(a, true, curuser),v);
 }
 
 function
 write16(a, v)
 {
-	return physwrite16(decode(a, false),v);
+	return physwrite16(decode(a, true, curuser),v);
 }
 
 function
@@ -253,6 +279,8 @@ printstate()
 		"R6 " + ostr(R[6],6) + " " + 
 		"R7 " + ostr(R[7],6)
 	+ "\n[");
+	if(prevuser) writedebug("u"); else writedebug("k");
+	if(curuser) writedebug("U"); else writedebug("K");
 	if(PS & FLAGN) writedebug("N"); else writedebug(" ");
 	if(PS & FLAGZ) writedebug("Z"); else writedebug(" ");
 	if(PS & FLAGV) writedebug("V"); else writedebug(" ");
@@ -285,13 +313,13 @@ aget(v, l)
 	case 020:
 		addr = R[v & 7];
 		R[v & 7] += l;
-		break;1
+		break;
 	case 040:
 		R[v & 7] -= l;
 		addr = R[v & 7];
 		break;
 	case 060:
-		addr = read16();
+		addr = fetch16();
 		addr += R[v & 7];
 		break;
 	}
@@ -345,9 +373,11 @@ branch(o)
 function
 step()
 {
-	var val, val1, val2, da, sa, d, s, l, r;
+	var val, val1, val2, da, sa, d, s, l, r, o, max, maxp, msb;
 	ips++;
 	curPC = R[7];
+	lastPCs = lastPCs.slice(0,100);
+	lastPCs.splice(0, 0, curPC);
 	instr = fetch16();
 	d = instr & 077;
 	s = (instr & 07700) >> 6;
@@ -424,7 +454,7 @@ step()
 	case 0160000: // SUB
 		sa = aget(s, 2); val1 = memread(sa, 2);
 		da = aget(d, 2); val2 = memread(da, 2);
-		val = (val1 - val2) & 0xFFFF;
+		val = (val2 - val1) & 0xFFFF;
 		PS &= 0xFFF0;
 		if(val == 0) PS |= FLAGZ;
 		if(val & 0x8000) PS |= FLAGN;
@@ -442,7 +472,7 @@ step()
 		R[7] = val;
 		return;
 	case 0071000: // DIV
-		val1 = R[s & 7] | (R[(s & 7) + 1] << 8);
+		val1 = (R[s & 7] << 8) | R[(s & 7) + 1];
 		da = aget(d, l); val2 = memread(da, 2);
 		PS &= 0xFFF0;
 		if(val2 == 0) {
@@ -459,7 +489,7 @@ step()
 		val1 = R[s & 7];
 		da = aget(d, 2); val2 = memread(da, 2) & 077;
 		PS &= 0xFFF0;
-		if(val & 040) {
+		if(val2 & 040) {
 			val2 = (077 ^ val2) + 1;
 			if(val1 & 0100000) {
 				val = 0xFFFF ^ (0xFFFF >> val2);
@@ -468,13 +498,20 @@ step()
 				val = val1 >> val2;
 			if(val1 & (1 << (val2 - 1))) PS |= FLAGC;
 		} else {
-			val = val1 << val2;
+			val = (val1 << val2) & 0xFFFF;
 			if(val1 & (1 << (16 - val2))) PS |= FLAGC;
 		}
 		R[s & 7] = val;
 		if(val == 0) PS |= FLAGZ;
 		if(val & 0100000) PS |= FLAGN;
 		if(xor(val & 0100000, val1 & 0100000)) PS |= FLAGV;
+		return;
+	case 0077000: // SOB
+		if(--R[s & 7]) {
+			o &= 077;
+			o <<= 1;
+			R[7] -= o;
+		}
 		return;
 	}
 	switch(instr & 0077700) {
@@ -630,21 +667,27 @@ step()
 		if(val & 0x80) PS |= FLAGN;
 		memwrite(da, l, val);
 		return;
+	case 0006500: // MFPI
+		da = aget(d, 2);
+		val = physread16(decode(da, false, prevuser));
+		push(val);
+		PS &= 0xFFF0; PS |= FLAGC;
+		if(val == 0) PS |= FLAGZ;
+		if(val & 0x8000) PS |= FLAGN;
+		return;
+	case 0006600: // MTPI
+		da = aget(d, 2);
+		val = pop();
+		physwrite16(decode(da, true, prevuser), val);
+		PS &= 0xFFF0; PS |= FLAGC;
+		if(val == 0) PS |= FLAGZ;
+		if(val & 0x8000) PS |= FLAGN;
+		return;
 	}
-	if((instr & 0177770) == 0000200) {
+	if((instr & 0177770) == 0000200) { // RTS
 		R[7] = R[d & 7];
 		R[d & 7] = pop();
 		return;
-	}
-	if((instr & 0177077) == 0077000) {
-		if(R[s & 7]--) {
-			o &= 077;
-			if(o & 040) {
-				o = -(((~o)+1)&077);
-			}
-			o <<= 1;
-			R[7] += o;
-		}
 	}
 	switch(instr & 0177400) {
 	case 0000400: branch(o); return;
@@ -663,6 +706,12 @@ step()
 	case 0103000: if(!(PS & FLAGC)) branch(o); return;
 	case 0103400: if(PS & FLAGC) branch(o); return;
 	}
+	switch(instr) {
+	case 0000005:
+		clearterminal();
+		rkreset();
+		return;
+	}
 	panic("invalid instruction");
 }
 
@@ -672,12 +721,15 @@ reset()
 	var i;
 	for(i=0;i<7;i++) R[i] = 0;
 	PS = 0;
+	curuser = false;
+	prevuser = false;
 	SR0 = 0;
 	curPC = 0;
 	instr = 0;
 	ips = 0;
 	for(i=0;i<memory.length;i++) memory[i] = 0;
 	for(i=0;i<bootrom.length;i++) memory[01000+i] = bootrom[i];
+	for(i=0;i<16;i++) pages[i] = createpage(0, 0);
 	R[7] = 02002;
 	cleardebug();
 	clearterminal();
@@ -689,7 +741,8 @@ nsteps(n)
 {
 	while(n--) {
 		step();
-//		printstate();
+		if(pr)
+			printstate();
 	}
 }
 
