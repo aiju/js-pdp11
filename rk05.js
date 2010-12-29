@@ -1,0 +1,147 @@
+var RKDS, RKER, RKCS, RKWC, RKBA, drive, sector, surface, cylinder, rkimg;
+
+var imglen = 2077696;
+
+var
+    RKOVR = (1<<14),
+    RKNXD = (1<<7),
+    RKNXC = (1<<6),
+    RKNXS = (1<<5)
+   ;
+
+function
+rkread16(a)
+{
+	switch(a) {
+	case 0777400: return RKDS;
+	case 0777402: return RKER;
+	case 0777404: return RKCS;
+	case 0777406: return RKWC;
+	case 0777410: return RKBA;
+	case 0777412: return (sector) | (surface << 4) | (cylinder << 5) | (drive << 13);
+	}
+	panic("invalid read");
+}
+
+function
+rknotready()
+{
+	document.getElementById('rkbusy').style.display = '';
+	RKDS &= ~(1<<6);
+	RKCS &= ~(1<<7);
+}
+
+function
+rkready()
+{
+	document.getElementById('rkbusy').style.display = 'none';
+	RKDS |= 1<<6;
+	RKCS |= 1<<7;
+}
+
+function
+rkerror(code)
+{	
+	var msg;
+	rkready();
+	RKER |= code;
+	RKCS |= (1<<15) | (1<<14);
+	switch(code) {
+	case RKOVR: msg = "operation overflowed the disk"; break;
+	case RKNXD: msg = "invalid disk accessed"; break;
+	case RKNXC: msg = "invalid cylinder accessed"; break;
+	case RKNXS: msg = "invalid sector accessed"; break;
+	}
+	panic(msg);
+}
+
+function
+rkreadsec()
+{
+	var pos;
+	if(drive != 0) rkerror(RKNXD);
+	if(cylinder > 0312) rkerror(RKNXC);
+	if(sector > 013) rkerror(RKNXS);
+	pos = (cylinder * 24 + surface * 12 + sector) * 512;
+	for(i=0;i<256 && RKWC;i++) {
+		memory[RKBA >> 1] = (rkdisk.charCodeAt(pos) & 0xFF) | ((rkdisk.charCodeAt(pos+1) & 0xFF) << 8);
+		RKBA += 2;
+		pos += 2;
+		RKWC = (RKWC + 1) & 0xFFFF;
+	}
+	sector++;
+	if(sector > 013) {
+		sector = 0;
+		surface++;
+		if(surface > 1) {
+			surface = 0;
+			cylinder++;
+			if(cylinder > 0312)
+				rkerror(RKOVR);
+		}
+	}
+	if(RKWC)
+		setTimeout('rkreadsec()', 3);
+	else
+		rkready();
+}
+
+function
+rkgo()
+{
+	switch((RKCS & 017) >> 1) {
+	case 0: rkreset(); break;
+	case 2: rknotready(); setTimeout('rkreadsec()', 3); break;
+	default: panic("unimplemented RK05 operation " + ((RKCS & 017) >> 1).toString());
+	}
+}
+
+function
+rkwrite16(a,v)
+{
+	switch(a) {
+	case 0777400: break;
+	case 0777402: break;
+	case 0777404:
+		v &= 017517; // writable bits
+		RKCS &= ~017517;
+		RKCS |= v & ~1; // don't set GO bit
+		if(v & 1) rkgo();
+		break;
+	case 0777406: RKWC = v; break;
+	case 0777410: RKBA = v; break;
+	case 0777412:
+		drive = RKDA >> 13;
+		cylinder = (RKDA >> 5) & 127;
+		surface = (RKDA >> 4) & 1;
+		sector = RKDA & 15;
+		break;
+	default:
+		panic("invalid write");
+	}
+}
+
+function
+rkreset()
+{
+	RKDS = (1 << 11) | (1 << 7) | (1 << 6);
+	RKER = 0;
+	RKCS = 1 << 7;
+	RKWC = 0;
+	RKBA = 0;
+	RKDA = 0;
+	RKDB = 0;
+}
+
+function
+rkinit()
+{
+	var req;
+	req = new XMLHttpRequest();
+	req.open('GET', 'http://aiju.phicode.de/pdp11/rk0', false);
+	req.overrideMimeType('text/plain; charset=x-user-defined');
+	req.send(null);
+	if(req.status != 200) panic("could not load disk image");
+	rkdisk = req.responseText;
+	if(rkdisk.length != imglen) panic("file too short, got " + rkdisk.length.toString() + ", expected " + imglen.toString());
+}
