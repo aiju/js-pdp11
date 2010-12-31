@@ -247,6 +247,7 @@ function
 ostr(z,n)
 {
 	var val;
+	if(n == undefined) n = 6;
 	val = z.toString(8);
 	while(val.length < n)
 		val = "0"+val;
@@ -400,6 +401,10 @@ step()
 		PS &= 0xFFF1;
 		if(val & msb) PS |= FLAGN;
 		if(val == 0) PS |= FLAGZ;
+		if(da < 0 && l == 1 && val & msb) {
+			val |= 0xFF00;
+			l = 2;
+		}
 		memwrite(da, l, val);
 		return;
 	case 0020000: // CMP
@@ -678,7 +683,8 @@ step()
 	case 0006600: // MTPI
 		da = aget(d, 2);
 		val = pop();
-		physwrite16(decode(da, true, prevuser), val);
+		sa = decode(da, true, prevuser);
+		physwrite16(sa, val);
 		PS &= 0xFFF0; PS |= FLAGC;
 		if(val == 0) PS |= FLAGZ;
 		if(val & 0x8000) PS |= FLAGN;

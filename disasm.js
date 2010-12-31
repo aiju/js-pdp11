@@ -56,6 +56,8 @@ disasmaddr(m,a)
 		switch(m) {
 		case 027: a[0]+=2;return "$" + memory[a[0]>>1].toString(8);
 		case 037: a[0]+=2;return "*" + memory[a[0]>>1].toString(8);
+		case 067: a[0]+=2;return "*" + ((a[0] + 2 + memory[a[0]>>1]) & 0xFFFF).toString(8);
+		case 077: a[0]+=2;return "**" + ((a[0] + 2 + memory[a[0]>>1]) & 0xFFFF).toString(8);
 		}
 	}
 	r = rs[m & 7];
@@ -88,9 +90,10 @@ disasm(a)
 	s = (ins & 07700) >> 6;
 	d = ins & 077;
 	o = ins & 0377;
+	aa = [a];
 	switch(l[3]) {
-	case "SD": msg += " " + disasmaddr(s, [a]) + ","; // fallthrough
-	case "D": msg += " " + disasmaddr(d, [a]); break;
+	case "SD": msg += " " + disasmaddr(s, aa) + ","; // fallthrough
+	case "D": msg += " " + disasmaddr(d, aa); break;
 	case "RO": msg += " " + rs[ins & 7] + ","; o &= 077; // fallthrough
 	case "O":
 		if(o & 0x80) {
@@ -98,7 +101,7 @@ disasm(a)
 		} else {
 			msg += " +" + (2*o).toString(8);
 		} break;
-	case "RD": msg += " " + rs[(ins & 0700) >> 6] + ", " + disasmaddr(d, [a]); break;
+	case "RD": msg += " " + rs[(ins & 0700) >> 6] + ", " + disasmaddr(d, aa); break;
 	case "R": msg += " " + rs[ins & 7]; break;
 	case "R3": msg += " " + rs[(ins & 0700) >> 6]; break;
 	}

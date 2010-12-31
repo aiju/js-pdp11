@@ -112,7 +112,7 @@ rkwrite16(a,v)
 	case 0777410: RKBA = v; break;
 	case 0777412:
 		drive = v >> 13;
-		cylinder = (v >> 5) & 127;
+		cylinder = (v >> 5) & 0377;
 		surface = (v >> 4) & 1;
 		sector = v & 15;
 		break;
