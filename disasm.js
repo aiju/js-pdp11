@@ -45,8 +45,10 @@ var disasmtable = [
 	[0177777, 0006400, "MARK", "", false],
 	[0177000, 0077000, "SOB", "RO", false],
 	[0177777, 0000005, "RESET", "", false],
-	[0177700, 0006500, "MPFI", "D", false],
-	[0177700, 0006600, "MPTI", "D", false],
+	[0177700, 0006500, "MFPI", "D", false],
+	[0177700, 0006600, "MTPI", "D", false],
+	[0177777, 0000002, "RTI", "", false],
+	[0177777, 0000006, "RTT", "", false],
 ];
 
 function
@@ -87,6 +89,7 @@ disasm(a)
 	}
 	if(msg == undefined)
 		return "???";
+	if(l[4] && ins & 0100000) msg += "B";
 	s = (ins & 07700) >> 6;
 	d = ins & 077;
 	o = ins & 0377;

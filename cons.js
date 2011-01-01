@@ -56,7 +56,11 @@ conswrite16(a,v)
 	case 0777566:
 		v &= 0xFF;
 		if(!(TPS & 0x80)) break;
-		writeterminal(String.fromCharCode(v));
+		switch(v) {
+		case 13: break;
+		default:
+			writeterminal(String.fromCharCode(v));
+		}
 		TPS &= 0xff7f;
 		setTimeout("TPS |= 0x80;", 10);
 		break;
