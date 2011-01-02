@@ -56,7 +56,7 @@ rkerror(code)
 }
 
 function
-rkreadsec()
+rkrwsec(t)
 {
 	var pos;
 	if(drive != 0) rkerror(RKNXD);
@@ -64,7 +64,14 @@ rkreadsec()
 	if(sector > 013) rkerror(RKNXS);
 	pos = (cylinder * 24 + surface * 12 + sector) * 512;
 	for(i=0;i<256 && RKWC;i++) {
-		memory[RKBA >> 1] = (rkdisk.charCodeAt(pos) & 0xFF) | ((rkdisk.charCodeAt(pos+1) & 0xFF) << 8);
+		if(t) {
+			var val;
+			val = memory[RKBA >> 1];
+			rkdisk[pos] = val & 0xFF;
+			rkdisk[pos+1] = (val >> 8) & 0xFF;
+		}
+		else
+			memory[RKBA >> 1] = rkdisk[pos] | (rkdisk[pos+1] << 8);
 		RKBA += 2;
 		pos += 2;
 		RKWC = (RKWC + 1) & 0xFFFF;
@@ -81,9 +88,11 @@ rkreadsec()
 		}
 	}
 	if(RKWC)
-		setTimeout('rkreadsec()', 3);
-	else
+		setTimeout('rkrwsec('+t+')', 3);
+	else {
 		rkready();
+		if(RKCS & (1<<6)) interrupt(INTRK, 5);
+	}
 }
 
 function
@@ -91,7 +100,8 @@ rkgo()
 {
 	switch((RKCS & 017) >> 1) {
 	case 0: rkreset(); break;
-	case 2: rknotready(); setTimeout('rkreadsec()', 3); break;
+	case 1: rknotready(); setTimeout('rkrwsec(true)', 3); break;
+	case 2: rknotready(); setTimeout('rkrwsec(false)', 3); break;
 	default: panic("unimplemented RK05 operation " + ((RKCS & 017) >> 1).toString());
 	}
 }
@@ -135,12 +145,16 @@ rkreset()
 function
 rkinit()
 {
-	var req;
+	var req, buf, i;
 	req = new XMLHttpRequest();
 	req.open('GET', 'http://aiju.phicode.de/pdp11/rk0', false);
 	req.overrideMimeType('text/plain; charset=x-user-defined');
 	req.send(null);
 	if(req.status != 200) panic("could not load disk image");
-	rkdisk = req.responseText;
-	if(rkdisk.length != imglen) panic("file too short, got " + rkdisk.length.toString() + ", expected " + imglen.toString());
+	buf = req.responseText;
+	if(buf.length != imglen) panic("file too short, got " + buf.length.toString() + ", expected " + imglen.toString());
+	rkdisk = new Array(buf.length);
+	for(i=0;i<buf.length;i++) {
+		rkdisk[i] = buf.charCodeAt(i) & 0xFF;
+	}
 }

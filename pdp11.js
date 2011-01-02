@@ -16,6 +16,8 @@ var ips;
 var SR0;
 var curuser, prevuser;
 var LKS, clkcounter;
+var waiting = false;
+var interrupts = [];
 
 var pages = new Array(16);
 
@@ -25,8 +27,11 @@ var
 	INTINVAL   = 0010,
 	INTDEBUG   = 0014,
 	INTIOT     = 0020,
+	INTTTYIN   = 0060,
+	INTTTYOUT  = 0064,
 	INTFAULT   = 0250,
-	INTCLOCK   = 0100
+	INTCLOCK   = 0100,
+	INTRK      = 0220
 ;
 
 
@@ -329,7 +334,12 @@ printstate()
 	if(PS & FLAGZ) writedebug("Z"); else writedebug(" ");
 	if(PS & FLAGV) writedebug("V"); else writedebug(" ");
 	if(PS & FLAGC) writedebug("C"); else writedebug(" ");
-	writedebug("]  instr " + ostr(curPC,6) + ": " + ostr(instr,6)+"   " + disasm(curPC) + "\n\n");
+	writedebug("]  instr " + ostr(curPC,6) + ": " + ostr(instr,6)+"   ");
+	try {
+		writedebug(disasm(decode(curPC,false,curuser)));
+	} catch(e) {
+	}
+	writedebug("\n\n");
 }
 
 function
@@ -352,10 +362,24 @@ Trap(num, msg)
 }
 
 function
-interrupt(vec, priority)
+interrupt(vec, pri)
 {
+	var i;
 	if(vec & 1) panic("Thou darst calling interrupt() with an odd vector number?");
-	if(priority <= ((PS >> 5) & 7)) return;
+	for(i=0;i<interrupts.length;i++) {
+		if(interrupts[i].pri < pri)
+			break;
+	}
+	for(;i<interrupts.length;i++) {
+		if(interrupts[i].vec >= vec)
+			break;
+	}
+	interrupts.splice(i, 0, {vec: vec, pri: pri});
+}
+
+function
+handleinterrupt(vec)
+{
 	try {
 		prev = PS;
 		switchmode(false);
@@ -369,6 +393,7 @@ interrupt(vec, priority)
 	R[7] = memory[vec>>1];
 	PS = memory[(vec>>1)+1];
 	if(prevuser) PS |= (1<<13)|(1<<12);
+	waiting = false;
 }
 
 function
@@ -376,7 +401,7 @@ trapat(vec, msg)
 {
 	var prev;
 	if(vec & 1) panic("Thou darst calling trapat() with an odd vector number?");
-	writedebug("trap " + ostr(vec) + " occured:" + msg + "\n");
+	writedebug("trap " + ostr(vec) + " occured: " + msg + "\n");
 	printstate();
 	try {
 		prev = PS;
@@ -394,13 +419,14 @@ trapat(vec, msg)
 	R[7] = memory[vec>>1];
 	PS = memory[(vec>>1)+1];
 	if(prevuser) PS |= (1<<13)|(1<<12);
+	waiting = false;
 }
 
 function
 aget(v, l)
 {
 	var addr;
-	if((v & 7) == 6 || (v & 010)) l = 2;
+	if((v & 7) >= 6 || (v & 010)) l = 2;
 	if((v & 070) == 000) {
 		return -(v + 1);
 	}
@@ -474,10 +500,13 @@ step()
 {
 	var val, val1, val2, da, sa, d, s, l, r, o, max, maxp, msb;
 	ips++;
+	if(waiting) return;
 	curPC = R[7];
 	lastPCs = lastPCs.slice(0,100);
 	lastPCs.splice(0, 0, curPC);
 	instr = fetch16();
+	if(curPC == 021300) 
+		console.log("");
 	d = instr & 077;
 	s = (instr & 07700) >> 6;
 	l = 2 - (instr >> 15);
@@ -588,7 +617,7 @@ step()
 		if(val < (1<<15) || val >= ((1<<15)-1)) PS |= FLAGC;
 		return;
 	case 0071000: // DIV
-		val1 = (R[s & 7] << 8) | R[(s & 7) + 1];
+		val1 = (R[s & 7] << 8) | R[(s & 7) | 1];
 		da = aget(d, l); val2 = memread(da, 2);
 		PS &= 0xFFF0;
 		if(val2 == 0) {
@@ -621,6 +650,28 @@ step()
 		if(val == 0) PS |= FLAGZ;
 		if(val & 0100000) PS |= FLAGN;
 		if(xor(val & 0100000, val1 & 0100000)) PS |= FLAGV;
+		return;
+	case 0073000: // ASHC
+		val1 = (R[s & 7] << 8) | R[(s & 7) | 1];
+		da = aget(d, 2); val2 = memread(da, 2) & 077;
+		PS &= 0xFFF0;
+		if(val2 & 040) {
+			val2 = (077 ^ val2) + 1;
+			if(val1 & 0x80000000) {
+				val = 0xFFFFFFFF ^ (0xFFFFFFFF >> val2);
+				val |= val1 >> val2;
+			} else
+				val = val1 >> val2;
+			if(val1 & (1 << (val2 - 1))) PS |= FLAGC;
+		} else {
+			val = (val1 << val2) & 0xFFFFFFFF;
+			if(val1 & (1 << (16 - val2))) PS |= FLAGC;
+		}
+		R[s & 7] = (val >> 16) & 0xFFFF;
+		R[(s & 7)|1] = val & 0xFFFF;
+		if(val == 0) PS |= FLAGZ;
+		if(val & 0x80000000) PS |= FLAGN;
+		if(xor(val & 0x80000000, val1 & 0x80000000)) PS |= FLAGV;
 		return;
 	case 0077000: // SOB
 		if(--R[s & 7]) {
@@ -837,10 +888,26 @@ step()
 	case 0103000: if(!(PS & FLAGC)) branch(o); return;
 	case 0103400: if(PS & FLAGC) branch(o); return;
 	}
+	if((instr & 0177000) == 0104000 || instr == 3 || instr == 4) { // EMT TRAP IOT BPT
+		var vec, prev;
+		if((instr & 0177400) == 0104000) vec = 030;
+		else if((instr & 0177400) == 0104400) vec = 034;
+		else if(instr == 3) vec = 014;
+		else vec = 020;
+		prev = PS;
+		switchmode(false);
+		push(prev);
+		push(R[7]);
+		R[7] = memory[vec>>1];
+		PS = memory[(vec>>1)+1];
+		if(prevuser) PS |= (1<<13)|(1<<12);
+		return;
+	}
 	switch(instr) {
 	case 0000001: // WAIT
-		stop();
-		setTimeout('LKS |= 0x80; interrupt(INTCLOCK, 6); run()', 20); // FIXME, really
+//		stop();
+//		setTimeout('LKS |= 0x80; interrupt(INTCLOCK, 6); run();', 20); // FIXME, really
+		waiting = true;
 		return;
 	case 0000002: // RTI
 	case 0000006: // RTT
@@ -850,6 +917,8 @@ step()
 	case 0000005: // RESET
 		clearterminal();
 		rkreset();
+		return;
+	case 0170011: // SETD ; not needed by UNIX, but used; therefore ignored
 		return;
 	}
 	throw Trap(INTINVAL, "invalid instruction");
@@ -878,6 +947,7 @@ reset()
 	clearterminal();
 	rkreset();
 	clkcounter = 0;
+	waiting = false;
 }
 
 function
@@ -886,6 +956,10 @@ nsteps(n)
 	while(n--) {
 		try {
 			step();
+			if(interrupts.length && interrupts[0].pri >= ((PS >> 5) & 7)) {
+				handleinterrupt(interrupts[0].vec);
+				interrupts.splice(0, 1);
+			}
 			clkcounter++;
 			if(clkcounter >= 40000) {
 				clkcounter = 0;
@@ -906,7 +980,7 @@ function
 run() 
 {
 	if(tim1 == undefined)
-		tim1 = setInterval('nsteps(1000);', 1);
+		tim1 = setInterval('nsteps(4000);', 1);
 	if(tim2 == undefined)
 		tim2 = setInterval('document.getElementById("ips").innerHTML = ips; ips = 0;', 1000);
 }

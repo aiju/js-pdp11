@@ -24,6 +24,7 @@ var disasmtable = [
 	[0177000, 0070000, "MUL", "RD", false],
 	[0177000, 0071000, "DIV", "RD", false],
 	[0177000, 0072000, "ASH", "RD", false],
+	[0177000, 0073000, "ASHC", "RD", false],
 	[0177400, 0000400, "BR", "O", false],
 	[0177400, 0001000, "BNE", "O", false],
 	[0177400, 0001400, "BEQ", "O", false],
@@ -47,8 +48,13 @@ var disasmtable = [
 	[0177777, 0000005, "RESET", "", false],
 	[0177700, 0006500, "MFPI", "D", false],
 	[0177700, 0006600, "MTPI", "D", false],
+	[0177777, 0000001, "WAIT", "", false],
 	[0177777, 0000002, "RTI", "", false],
 	[0177777, 0000006, "RTT", "", false],
+	[0177400, 0104000, "EMT", "N", false],
+	[0177400, 0104400, "TRAP", "N", false],
+	[0177777, 0000003, "BPT", "", false],
+	[0177777, 0000004, "IOT", "", false],
 ];
 
 function
@@ -97,7 +103,7 @@ disasm(a)
 	switch(l[3]) {
 	case "SD": msg += " " + disasmaddr(s, aa) + ","; // fallthrough
 	case "D": msg += " " + disasmaddr(d, aa); break;
-	case "RO": msg += " " + rs[ins & 7] + ","; o &= 077; // fallthrough
+	case "RO": msg += " " + rs[(ins & 0700) >> 6] + ","; o &= 077; // fallthrough
 	case "O":
 		if(o & 0x80) {
 			msg += " -" + (2*((0xFF ^ o) + 1)).toString(8);
