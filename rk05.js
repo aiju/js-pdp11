@@ -15,9 +15,9 @@ rkread16(a)
 	switch(a) {
 	case 0777400: return RKDS;
 	case 0777402: return RKER;
-	case 0777404: return RKCS;
+	case 0777404: return RKCS | ((RKBA & 0x30000) >> 12);
 	case 0777406: return RKWC;
-	case 0777410: return RKBA;
+	case 0777410: return RKBA & 0xFFFF;
 	case 0777412: return (sector) | (surface << 4) | (cylinder << 5) | (drive << 13);
 	}
 	panic("invalid read");
@@ -113,13 +113,14 @@ rkwrite16(a,v)
 	case 0777400: break;
 	case 0777402: break;
 	case 0777404:
+		RKBA = (RKBA & 0xFFFF) | ((v & 060) << 12);
 		v &= 017517; // writable bits
 		RKCS &= ~017517;
 		RKCS |= v & ~1; // don't set GO bit
 		if(v & 1) rkgo();
 		break;
 	case 0777406: RKWC = v; break;
-	case 0777410: RKBA = v; break;
+	case 0777410: RKBA = (RKBA & 0x30000) | v; break;
 	case 0777412:
 		drive = v >> 13;
 		cylinder = (v >> 5) & 0377;

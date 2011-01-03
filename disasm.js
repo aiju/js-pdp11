@@ -54,7 +54,7 @@ var disasmtable = [
 	[0177400, 0104000, "EMT", "N", false],
 	[0177400, 0104400, "TRAP", "N", false],
 	[0177777, 0000003, "BPT", "", false],
-	[0177777, 0000004, "IOT", "", false],
+	[0177777, 0000004, "IOT", "", false]
 ];
 
 function

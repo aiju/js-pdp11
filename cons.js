@@ -1,4 +1,4 @@
-var TKS, TPS, keybuf = [];
+var TKS, TPS, keybuf = 0;
 
 function
 clearterminal()
@@ -21,7 +21,20 @@ function
 addchar(c)
 {
 	TKS |= 0x80;
-	keybuf.splice(0, 0, c);
+	keybuf = c;
+	if(TKS & (1<<6)) interrupt(INTTTYIN, 4);
+}
+
+function
+specialchar(c)
+{
+	switch(c) {
+	case 42: keybuf = 4; break;
+	case 19: keybuf = 034; break;
+	case 46: keybuf = 127; break;
+	default: return;
+	}
+	TKS |= 0x80;
 	if(TKS & (1<<6)) interrupt(INTTTYIN, 4);
 }
 
@@ -30,7 +43,7 @@ getchar()
 {
 	if(TKS & 0x80) {
 		TKS &= 0xff7e;
-		return keybuf.pop();
+		return keybuf;
 	}
 	return 0;
 }
@@ -42,6 +55,7 @@ consread16(a)
 	case 0777560: return TKS;
 	case 0777562: return getchar();
 	case 0777564: return TPS;
+	case 0777566: return 0;
 	}
 	panic("read from invalid address " + ostr(a,6));
 }

@@ -13,7 +13,7 @@ var inst; // current instruction
 var memory = new Array(128*1024); // word addressing
 var tim1, tim2;
 var ips;
-var SR0;
+var SR0, SR2;
 var curuser, prevuser;
 var LKS, clkcounter;
 var waiting = false;
@@ -90,7 +90,7 @@ physread16(a)
 	if(a == 0777546) return LKS;
 	if(a == 0777570) return 0173030;
 	if(a == 0777572) return SR0;
-	if(a == 0777576) return curPC;
+	if(a == 0777576) return SR2;
 	if(a == 0777776) return PS;
 	if((a & 0777770) == 0777560) return consread16(a);
 	if((a & 0777760) == 0777400) return rkread16(a);
@@ -168,21 +168,24 @@ decode(a,w,m)
 		SR0 = (1<<13) | 1;
 		SR0 |= (a >> 12) & ~1;
 		if(user) SR0 |= (1<<5)|(1<<6);
+		SR2 = curPC;
 		throw Trap(INTFAULT, "write to read-only page " + ostr(a,6));
 	}
 	if(!p.read) {
 		SR0 = (1<<15) | 1;
 		SR0 |= (a >> 12) & ~1;
 		if(user) SR0 |= (1<<5)|(1<<6);
+		SR2 = curPC;
 		throw Trap(INTFAULT, "read from no-access page " + ostr(a,6));
 	}
 	block = (a >> 6) & 0177;
 	disp = a & 077;
-	if((p.ed ? (127 - block) : block) > p.len) {
+	if(p.ed ? (block < p.len) : (block > p.len)) {
 		SR0 = (1<<14) | 1;
 		SR0 |= (a >> 12) & ~1;
 		if(user) SR0 |= (1<<5)|(1<<6);
-		throw Trap(INTFAULT, "page length exceeded " + ostr(a,6));
+		SR2 = curPC;
+		throw Trap(INTFAULT, "page length exceeded, address " + ostr(a,6) + " (block " + ostr(block,3) + ") is beyond length " + ostr(p.len,3));
 	}
 	if(w) p.pdr |= 1<<6;
 	return ((block + p.addr) << 6) + disp;
@@ -505,8 +508,6 @@ step()
 	lastPCs = lastPCs.slice(0,100);
 	lastPCs.splice(0, 0, curPC);
 	instr = fetch16();
-	if(curPC == 021300) 
-		console.log("");
 	d = instr & 077;
 	s = (instr & 07700) >> 6;
 	l = 2 - (instr >> 15);
@@ -625,7 +626,7 @@ step()
 			return;
 		}
 		R[s & 7] = (val1 / val2) & 0xFFFF;
-		R[(s & 7) + 1] = (val1 % val2) & 0xFFFF;
+		R[(s & 7) | 1] = (val1 % val2) & 0xFFFF;
 		if(R[s & 7] == 0) PS |= FLAGZ;
 		if(R[s & 7] & 0100000) PS |= FLAGN;
 		if(val1 == 0) PS |= FLAGV;
@@ -672,6 +673,15 @@ step()
 		if(val == 0) PS |= FLAGZ;
 		if(val & 0x80000000) PS |= FLAGN;
 		if(xor(val & 0x80000000, val1 & 0x80000000)) PS |= FLAGV;
+		return;
+	case 0074000: // XOR
+		val1 = R[s & 7];
+		da = aget(d, 2); val2 = memread(da, 2);
+		val = val1 ^ val2;
+		PS &= 0xFFF1;
+		if(val == 0) PS |= FLAGZ;
+		if(val & 0x8000) PS |= FLAGZ;
+		memwrite(da, 2, val);
 		return;
 	case 0077000: // SOB
 		if(--R[s & 7]) {
@@ -726,14 +736,15 @@ step()
 	case 0005500: // ADC
 		da = aget(d, l);
 		val = memread(da, l);
-		PS &= 0xFFF0;
 		if(PS & FLAGC) {
+			PS &= 0xFFF0;
 			if((val + 1) & msb) PS |= FLAGN;
 			if(val == max) PS |= FLAGZ;
 			if(val == 0077777) PS |= FLAGV;
 			if(val == 0177777) PS |= FLAGC;
 			memwrite(da, l, (val+1) & max);
 		} else {
+			PS &= 0xFFF0;
 			if(val & msb) PS |= FLAGN;
 			if(val == 0) PS |= FLAGZ;
 		}
@@ -745,7 +756,7 @@ step()
 			PS &= 0xFFF0;
 			if((val - 1) & msb) PS |= FLAGN;
 			if(val == 1) PS |= FLAGZ;
-			if(val == 0) PS |= FLAGC;
+			if(val) PS |= FLAGC;
 			if(val == 0100000) PS |= FLAGV;
 			memwrite(da, l, (val-1) & max);
 		} else {
@@ -753,6 +764,7 @@ step()
 			if(val & msb) PS |= FLAGN;
 			if(val == 0) PS |= FLAGZ;
 			if(val == 0100000) PS |= FLAGV;
+			PS |= FLAGC;
 		}
 		return;
 	case 0005700: // TST
@@ -903,18 +915,39 @@ step()
 		if(prevuser) PS |= (1<<13)|(1<<12);
 		return;
 	}
+	if((instr & 0177740) == 0240) { // CL?, SE?
+		if(instr & 020) {
+			PS |= instr & 017;
+		} else {
+			PS &= ~(instr & 017);
+		}
+		return;
+	}
 	switch(instr) {
+	case 0000000: // HALT
+		if(curuser) break;
+		debugwrite("HALT\n");
+		printstate();
+		stop();
+		return;
 	case 0000001: // WAIT
 //		stop();
 //		setTimeout('LKS |= 0x80; interrupt(INTCLOCK, 6); run();', 20); // FIXME, really
+		if(curuser) break;
 		waiting = true;
 		return;
 	case 0000002: // RTI
 	case 0000006: // RTT
 		R[7] = pop();
-		physwrite16(0777776, pop());
+		val = pop();
+		if(curuser) {
+			val &= 047;
+			val |= PS & 0177730;
+		}
+		physwrite16(0777776, val);
 		return;
 	case 0000005: // RESET
+		if(curuser) return;
 		clearterminal();
 		rkreset();
 		return;
