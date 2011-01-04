@@ -315,7 +315,9 @@ cleardebug()
 function
 writedebug(msg)
 {
-	document.getElementById("debug").firstChild.appendData(msg);
+	var ta = document.getElementById("debug");
+	ta.firstChild.appendData(msg);
+	ta.scrollTop = ta.scrollHeight;
 }
 
 function
@@ -501,13 +503,15 @@ branch(o)
 function
 step()
 {
-	var val, val1, val2, da, sa, d, s, l, r, o, max, maxp, msb;
+	var val, val1, val2, ia, da, sa, d, s, l, r, o, max, maxp, msb;
 	ips++;
 	if(waiting) return;
 	curPC = R[7];
+	ia = decode(R[7], false, curuser);
+	R[7] += 2;
 	lastPCs = lastPCs.slice(0,100);
-	lastPCs.splice(0, 0, curPC);
-	instr = fetch16();
+	lastPCs.splice(0, 0, ia);
+	instr = physread16(ia);
 	d = instr & 077;
 	s = (instr & 07700) >> 6;
 	l = 2 - (instr >> 15);
@@ -618,7 +622,7 @@ step()
 		if(val < (1<<15) || val >= ((1<<15)-1)) PS |= FLAGC;
 		return;
 	case 0071000: // DIV
-		val1 = (R[s & 7] << 8) | R[(s & 7) | 1];
+		val1 = (R[s & 7] << 16) | R[(s & 7) | 1];
 		da = aget(d, l); val2 = memread(da, 2);
 		PS &= 0xFFF0;
 		if(val2 == 0) {
@@ -653,7 +657,7 @@ step()
 		if(xor(val & 0100000, val1 & 0100000)) PS |= FLAGV;
 		return;
 	case 0073000: // ASHC
-		val1 = (R[s & 7] << 8) | R[(s & 7) | 1];
+		val1 = (R[s & 7] << 16) | R[(s & 7) | 1];
 		da = aget(d, 2); val2 = memread(da, 2) & 077;
 		PS &= 0xFFF0;
 		if(val2 & 040) {
@@ -666,7 +670,7 @@ step()
 			if(val1 & (1 << (val2 - 1))) PS |= FLAGC;
 		} else {
 			val = (val1 << val2) & 0xFFFFFFFF;
-			if(val1 & (1 << (16 - val2))) PS |= FLAGC;
+			if(val1 & (1 << (32 - val2))) PS |= FLAGC;
 		}
 		R[s & 7] = (val >> 16) & 0xFFFF;
 		R[(s & 7)|1] = val & 0xFFFF;
@@ -926,7 +930,7 @@ step()
 	switch(instr) {
 	case 0000000: // HALT
 		if(curuser) break;
-		debugwrite("HALT\n");
+		writedebug("HALT\n");
 		printstate();
 		stop();
 		return;
