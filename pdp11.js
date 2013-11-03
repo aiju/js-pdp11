@@ -596,7 +596,7 @@ step()
 		if(val == 0) PS |= FLAGZ;
 		if(val & 0x8000) PS |= FLAGN;
 		if(((val1 ^ val2) & 0x8000) && !((val2 ^ val) & 0x8000)) PS |= FLAGV;
-		if(val1 >= val2) PS |= FLAGC;
+		if(val1 > val2) PS |= FLAGC;
 		memwrite(da, 2, val);
 		return;
 	}
@@ -610,9 +610,9 @@ step()
 		return;
 	case 0070000: // MUL
 		val1 = R[s & 7];
-		if(val1 & 0x80) val1 = -((0xFFFF^val1)+1);
+		if(val1 & 0x8000) val1 = -((0xFFFF^val1)+1);
 		da = aget(d, l); val2 = memread(da, 2);
-		if(val2 & 0x80) val2 = -((0xFFFF^val1)+1);
+		if(val2 & 0x8000) val2 = -((0xFFFF^val2)+1);
 		val = val1 * val2;
 		R[s & 7] = (val & 0xFFFF0000) >> 16;
 		R[(s & 7)|1] = val & 0xFFFF;
@@ -627,6 +627,10 @@ step()
 		PS &= 0xFFF0;
 		if(val2 == 0) {
 			PS |= FLAGC;
+			return;
+		}
+		if((val1 / val2) >= 0x10000){
+			PS |= FLAGV;
 			return;
 		}
 		R[s & 7] = (val1 / val2) & 0xFFFF;
