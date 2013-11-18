@@ -855,6 +855,11 @@ step()
 		if(val & 0x80) PS |= FLAGN;
 		memwrite(da, l, val);
 		return;
+	case 0006400: // MARK
+		R[6] += (instr & 077) << 1;
+		R[7] = R[5];
+		R[5] = pop();
+		break;
 	case 0006500: // MFPI
 		da = aget(d, 2);
 		if(da == -7)
