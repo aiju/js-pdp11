@@ -856,7 +856,7 @@ step()
 		memwrite(da, l, val);
 		return;
 	case 0006400: // MARK
-		R[6] += (instr & 077) << 1;
+		R[6] = R[7] + (instr & 077) << 1;
 		R[7] = R[5];
 		R[5] = pop();
 		break;
