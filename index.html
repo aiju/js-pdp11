@@ -29,7 +29,7 @@
 		<span id="ips"> </span>
 		<span id="rkbusy" style='display: none'>hard disk busy</span>
 		<div>press run, type <tt>unix</tt> at the <tt>@</tt> prompt to load the kernel, enjoy! <a href="http://aiju.de/code/pdp11/faq">faq</a></div>
-		<textarea id="terminal" readonly="readonly" onkeypress="addchar(event.which)" onkeyup="specialchar(event.which)"> </textarea>
+		<textarea id="terminal" readonly="readonly" onkeypress="addchar(event.which)" onkeyup="specialchar(event.shiftKey, event.which)"> </textarea>
 		<textarea id="debug" readonly="readonly"> </textarea>
 	</body>
 </html>

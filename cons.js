@@ -26,12 +26,13 @@ addchar(c)
 }
 
 function
-specialchar(c)
+specialchar(shift, c)
 {
 	switch(c) {
 	case 42: keybuf = 4; break;
 	case 19: keybuf = 034; break;
 	case 46: keybuf = 127; break;
+	case 222: keybuf = shift ? 042 : 047; break;
 	default: return;
 	}
 	TKS |= 0x80;
